@@ -1,0 +1,254 @@
+[
+    {
+        "id": "dbd371d.8d7c89",
+        "type": "comment",
+        "z": "351e50ce.0aca7",
+        "name": "Version: v.1.0.0",
+        "info": "",
+        "x": 200,
+        "y": 100,
+        "wires": []
+    },
+    {
+        "id": "cffc2ba5.a88968",
+        "type": "mqtt out",
+        "z": "351e50ce.0aca7",
+        "name": "To 3rd party",
+        "topic": "",
+        "qos": "",
+        "retain": "",
+        "broker": "1aaa178.15602e9",
+        "x": 730,
+        "y": 440,
+        "wires": []
+    },
+    {
+        "id": "1e2b74c2.1947ab",
+        "type": "mqtt in",
+        "z": "351e50ce.0aca7",
+        "name": "From 3rd party",
+        "topic": "#",
+        "qos": "0",
+        "broker": "1aaa178.15602e9",
+        "x": 200,
+        "y": 380,
+        "wires": [
+            [
+                "76b2e20b.13c90c"
+            ]
+        ]
+    },
+    {
+        "id": "73679db2.36bc14",
+        "type": "http request",
+        "z": "351e50ce.0aca7",
+        "name": "To Domoticz",
+        "method": "GET",
+        "ret": "txt",
+        "url": "",
+        "tls": "",
+        "x": 730,
+        "y": 380,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "72aa4bc2.55de24",
+        "type": "mqtt in",
+        "z": "351e50ce.0aca7",
+        "name": "From Domoticz",
+        "topic": "domoticz/out",
+        "qos": "0",
+        "broker": "1aaa178.15602e9",
+        "x": 200,
+        "y": 440,
+        "wires": [
+            [
+                "e60da60e.f71578"
+            ]
+        ]
+    },
+    {
+        "id": "e60da60e.f71578",
+        "type": "function",
+        "z": "351e50ce.0aca7",
+        "name": "Format MQTT",
+        "func": "var domoticzServer = \"http://localhost\";\nvar userVarValues = flow.get(\"userVarValues\");\n\n// Find what row in the userVarValues array that hold the settings for the reporting device\nvar mqttPayload = JSON.parse(msg.payload);\nvar arrI = null;\nfor (var i = 0; i < userVarValues.length; i++){\n    if(mqttPayload.idx == userVarValues[i].devIdx){\n        arrI = i;\n    }\n}\n\n// If no match is found, exit this function and return null\nif(arrI !== null){\n    // Find out which type of device that submitted the value\n    var userVar = userVarValues[arrI];\n    if(typeof userVar.slope === 'undefined') userVar.slope = 1;\n    if(typeof userVar.intercept === 'undefined') userVar.intercept = 0;\n    if(userVar.type != \"switch\") var aval = (mqttPayload.svalue1 - userVar.intercept) / userVar.slope;\n    \n    switch(userVar.type) {\n        case \"dimmer\":\n            // DIMMER 0-100%\n            msg.topic = userVar.outTopic;\n            msg.payload = aval;\n            switch(mqttPayload.nvalue) {\n                case 0:\n                    msg.payload = 0;\n                    break;\n                case 1:\n                    msg.payload = context.get(userVar.outTopic)||50;\n                    break;\n                case 2:\n                    context.set(userVar.outTopic, aval);\n                    break;\n            }\n            break;\n        case \"switch\":\n            // SWITCH ON/OFF\n            // OBS - Domoticz is case sensitive\n            msg.topic = userVar.outTopic;\n            if(mqttPayload.nvalue == \"1\"){\n                msg.payload = \"ON\";\n            } else if (mqttPayload.nvalue == \"0\"){\n                msg.payload = \"OFF\";\n            }\n            break;\n        case \"svalue1\":\n            // Thermostat setpoint\n            msg.topic = userVar.outTopic;\n            msg.payload = aval;\n            break;\n        default:\n            msg.topic = null;\n    }\n} else {\n    msg.topic = null;\n}\n\nif(msg.topic !== null){\n    return msg;\n}",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 380,
+        "y": 440,
+        "wires": [
+            [
+                "b9526d09.3c6f8"
+            ]
+        ]
+    },
+    {
+        "id": "76b2e20b.13c90c",
+        "type": "function",
+        "z": "351e50ce.0aca7",
+        "name": "Convert to url",
+        "func": "var domoticzServer = \"http://localhost:8080\";\nvar userVarValues = flow.get(\"userVarValues\");\n\n// Find what row in the userVarValues array that hold the settings for the reporting device\nvar arrI = null;\nfor (var i = 0; i < userVarValues.length; i++){\n    if(msg.topic == userVarValues[i].inTopic){\n        arrI = i;\n    }\n}\n\n// If no match is found, exit this function and return null\nif(arrI !== null){\n    // Find out which type of device that submitted the value\n    var userVar = userVarValues[arrI];\n    if(typeof userVar.limits === 'undefined') userVar.limits = \"0,0\";\n    if(typeof userVar.slope === 'undefined') userVar.slope = 1;\n    if(typeof userVar.intercept === 'undefined') userVar.intercept = 0;\n    if(userVar.type != \"switch\") var aval = (msg.payload * userVar.slope) + userVar.intercept;\n    \n    switch(userVar.type) {\n        case \"svalue\":  // Temperature, Percent, Pressure, Voltage, Text, Distance\n        case \"svalue1\": // Thermostat setpoint\n            msg.url = domoticzServer + \"/json.htm?type=command&param=udevice&idx=\" + userVar.devIdx + \"&nvalue=0&svalue=\" + aval;\n            break;\n        case \"humidity\":\n            // Humidity level\n            var humStat = 0; // 0 = Normal, 1 = Comfortable, 2 = Dry, 3 = Wet\n            var lims = userVar.limits.split(\";\");\n            var limits = [];\n            for (var i = 0; i < lims.length; i++){\n                var obj = lims[i].split(\",\");\n                if(aval >= obj[1]) humStat = obj[0];\n            }\n            msg.url = domoticzServer + \"/json.htm?type=command&param=udevice&idx=\" + userVar.devIdx + \"&nvalue=\" + aval + \"&svalue=\" + humStat;\n            break;\n        case \"switch\":\n            // Binary switch (ON/OFF)\n            // Domoticz is case sensitive\n            if(msg.payload == \"ON\" || msg.payload == \"OFF\"){\n                msg.payload = msg.payload.toLowerCase();\n                msg.payload = msg.payload.charAt(0).toUpperCase() + msg.payload.slice(1);\n                msg.url = domoticzServer + \"/json.htm?type=command&param=switchlight&idx=\" + userVar.devIdx + \"&switchcmd=\" + msg.payload;\n            }\n            break;\n        case \"dimmer\":\n            // Dimmer 0-100%\n            var level = parseInt(aval) + 1; // Bug in Domoticz require the \"in\" message to be 1 higher than actual value.\n            msg.url = domoticzServer + \"/json.htm?type=command&param=switchlight&idx=\" + userVar.devIdx + \"&switchcmd=Set%20Level&level=\" + level;\n            if(msg.payload == \"0\"){\n                msg.url = domoticzServer + \"/json.htm?type=command&param=switchlight&idx=\" + userVar.devIdx + \"&switchcmd=Off\";\n            }\n            break;\n        default:\n            msg.url = null;\n            break;\n    }\n} else {\n    msg.url = null;\n}\n\nif(msg.url !== null){\n    return msg;\n}",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 380,
+        "y": 380,
+        "wires": [
+            [
+                "1382d6b3.fb29e9"
+            ]
+        ]
+    },
+    {
+        "id": "f5a4050c.485998",
+        "type": "comment",
+        "z": "351e50ce.0aca7",
+        "name": "GET USER VARIABLES FROM DOMOTICZ",
+        "info": "",
+        "x": 290,
+        "y": 200,
+        "wires": []
+    },
+    {
+        "id": "85363dc9.9271e",
+        "type": "comment",
+        "z": "351e50ce.0aca7",
+        "name": "TRANSLATION FUNCTIONS",
+        "info": "",
+        "x": 240,
+        "y": 340,
+        "wires": []
+    },
+    {
+        "id": "f555f6d1.e7a918",
+        "type": "http request",
+        "z": "351e50ce.0aca7",
+        "name": "Read user variables",
+        "method": "GET",
+        "ret": "txt",
+        "url": "http://localhost:8080/json.htm?type=command&param=getuservariables",
+        "tls": "",
+        "x": 380,
+        "y": 280,
+        "wires": [
+            [
+                "5676d41a.f2ccec"
+            ]
+        ]
+    },
+    {
+        "id": "5676d41a.f2ccec",
+        "type": "function",
+        "z": "351e50ce.0aca7",
+        "name": "Cache to flow context",
+        "func": "msg.payload = JSON.parse(msg.payload);\nvar userVarRes = msg.payload.result,\n    userVarValues = [],\n    hueStats = {};\n\n\nfor (var i = 0; i < userVarRes.length; i++){\n    var obj = userVarRes[i];\n    for (var key in obj){\n        if(key == \"Value\"){\n            var val = JSON.parse(obj[key]);\n            if(val.MQTT !== undefined) {\n                userVarValues.push(val.MQTT);\n            }\n        }\n    }\n}\n\nflow.set(\"userVarValues\", userVarValues);\n\n//msg.payload = flow.get(\"userVarValues\");\n//return msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 600,
+        "y": 280,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "aead71b.7ee859",
+        "type": "mqtt in",
+        "z": "351e50ce.0aca7",
+        "name": "trigger",
+        "topic": "nodered/update-uservar",
+        "qos": "2",
+        "broker": "1aaa178.15602e9",
+        "x": 170,
+        "y": 280,
+        "wires": [
+            [
+                "f555f6d1.e7a918"
+            ]
+        ]
+    },
+    {
+        "id": "d500b3ca.6e288",
+        "type": "inject",
+        "z": "351e50ce.0aca7",
+        "name": "trigger",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "x": 170,
+        "y": 240,
+        "wires": [
+            [
+                "f555f6d1.e7a918"
+            ]
+        ]
+    },
+    {
+        "id": "1382d6b3.fb29e9",
+        "type": "delay",
+        "z": "351e50ce.0aca7",
+        "name": "rateLim 2msg/s",
+        "pauseType": "rate",
+        "timeout": "5",
+        "timeoutUnits": "seconds",
+        "rate": "2",
+        "nbRateUnits": "1",
+        "rateUnits": "second",
+        "randomFirst": "1",
+        "randomLast": "5",
+        "randomUnits": "seconds",
+        "drop": false,
+        "x": 560,
+        "y": 380,
+        "wires": [
+            [
+                "73679db2.36bc14"
+            ]
+        ]
+    },
+    {
+        "id": "b9526d09.3c6f8",
+        "type": "delay",
+        "z": "351e50ce.0aca7",
+        "name": "rateLim 1msg/s",
+        "pauseType": "rate",
+        "timeout": "5",
+        "timeoutUnits": "seconds",
+        "rate": "1",
+        "nbRateUnits": "1",
+        "rateUnits": "second",
+        "randomFirst": "1",
+        "randomLast": "5",
+        "randomUnits": "seconds",
+        "drop": false,
+        "x": 560,
+        "y": 440,
+        "wires": [
+            [
+                "cffc2ba5.a88968"
+            ]
+        ]
+    },
+    {
+        "id": "1aaa178.15602e9",
+        "type": "mqtt-broker",
+        "z": "351e50ce.0aca7",
+        "broker": "localhost",
+        "port": "1883",
+        "clientid": "MQTTTRANSLATORNODEREDMQTTCLIENT",
+        "usetls": false,
+        "compatmode": true,
+        "keepalive": "60",
+        "cleansession": true,
+        "willTopic": "",
+        "willQos": "0",
+        "willPayload": "",
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthPayload": ""
+    }
+]
